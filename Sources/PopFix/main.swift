@@ -194,11 +194,13 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
 
     func userNotificationCenter(_ c: UNUserNotificationCenter, didReceive r: UNNotificationResponse,
                                 withCompletionHandler done: @escaping () -> Void) {
-        if r.actionIdentifier == Notifier.restartAction {
+        let info = r.notification.request.content.userInfo
+        if r.actionIdentifier == Notifier.restartAction
+            || (r.actionIdentifier == UNNotificationDefaultActionIdentifier && info["kind"] as? String == "detect") {
             DispatchQueue.main.async { [self] in
                 if !restarting { restart(interactive: true, reason: "Restart from notification") }
             }
-        } else if let path = r.notification.request.content.userInfo["report"] as? String {
+        } else if let path = info["report"] as? String {
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
         }
         done()
@@ -234,9 +236,10 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
         }
     }
 
-    /// Auto-restart is on by default but can't work without the sudoers rule; ask once at launch.
-    func promptPasswordlessSetup() {
-        guard autoRestart, !defaults.bool(forKey: "passwordlessPrompted") else { return }
+    /// Explains and installs the passwordless restart rule, then turns auto-restart on. Shown once at launch
+    /// when the rule is missing, and whenever the user re-enrolls from the menu (`force`).
+    func promptPasswordlessSetup(force: Bool = false) {
+        guard force || (autoRestart && !defaults.bool(forKey: "passwordlessPrompted")) else { return }
         defaults.set(true, forKey: "passwordlessPrompted")
         NSApp.activate(ignoringOtherApps: true)
         let a = NSAlert()
@@ -244,7 +247,13 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
         a.informativeText = "PopFix restarts coreaudiod when audio pops, but that needs a one-time admin approval. It installs a rule allowing only `killall coreaudiod` without a password. Until then PopFix only logs pops."
         a.addButton(withTitle: "Enable…")
         a.addButton(withTitle: "Not now")
-        if a.runModal() == .alertFirstButtonReturn { togglePasswordless() }
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        autoRestart = true
+        queue.async { [self] in
+            _ = installSudoersRule()
+            let v = passwordlessRestartEnabled()
+            DispatchQueue.main.async { self.passwordless = v; self.render() }
+        }
     }
 
     func restart(interactive: Bool, reason: String) {
@@ -252,8 +261,9 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
         cooldownUntil = Date().addingTimeInterval(cooldown)
         let n = count
         let url = Report.newURL()
+        let restartID = "restart-\(url.lastPathComponent)"
         if !interactive {
-            Notifier.post("Audio popping detected", "\(n) overloads/\(Int(window))s. Restarting audio automatically…")
+            Notifier.post("Audio popping detected", "\(n) overloads/\(Int(window))s. Restarting audio automatically…", id: restartID)
         }
         queue.async { [self] in
             let snap = Report.snapshot()
@@ -267,7 +277,7 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
                 }
             }
             guard ok else { return }
-            Notifier.post("Restarted coreaudiod", "\(reason). Saving diagnostics to ~/Library/Logs/PopFix.", reveal: url)
+            Notifier.post("Restarted coreaudiod", "\(reason). Saving diagnostics to ~/Library/Logs/PopFix.", reveal: url, id: restartID)
             Report.write(to: url, reason: reason, count: n, action: "restarted coreaudiod", snapshot: snap)
         }
     }
@@ -303,7 +313,7 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
         }
         m.addItem(withTitle: "Pop threshold", action: nil, keyEquivalent: "").submenu = sub
 
-        let pw = m.addItem(withTitle: passwordless ? "Remove passwordless restart" : "Enable passwordless restart…",
+        let pw = m.addItem(withTitle: passwordless ? "Remove automatic restart" : "Set up automatic restart…",
                            action: #selector(togglePasswordless), keyEquivalent: "")
         pw.target = self
         m.addItem(.separator())
@@ -319,12 +329,17 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
     @objc func setThreshold(_ s: NSMenuItem) {
         if let t = s.representedObject as? Int { threshold = t; render() }
     }
+    /// Enrolled: remove the sudoers rule and stop auto-restarting. Not enrolled: show the setup dialog again.
     @objc func togglePasswordless() {
-        let enabled = passwordless
+        guard passwordless else { promptPasswordlessSetup(force: true); return }
         queue.async { [self] in
-            _ = enabled ? removeSudoersRule() : installSudoersRule()
+            _ = removeSudoersRule()
             let v = passwordlessRestartEnabled()
-            DispatchQueue.main.async { self.passwordless = v; self.render() }
+            DispatchQueue.main.async {
+                self.passwordless = v
+                if !v { self.autoRestart = false }
+                self.render()
+            }
         }
     }
 

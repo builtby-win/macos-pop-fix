@@ -111,13 +111,18 @@ enum Notifier {
         center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
-    /// `offerRestart` adds a "Restart audio now" button (handled in App's notification delegate).
-    static func post(_ title: String, _ body: String, reveal: URL? = nil, offerRestart: Bool = false) {
+    /// `offerRestart` adds a "Restart audio now" button and makes a plain click restart too (handled in App's
+    /// notification delegate). Posting with an existing `id` replaces that notification.
+    static func post(_ title: String, _ body: String, reveal: URL? = nil, offerRestart: Bool = false,
+                     id: String = UUID().uuidString) {
         let c = UNMutableNotificationContent()
         c.title = title
         c.body = body
-        if let reveal { c.userInfo = ["report": reveal.path] }
-        if offerRestart { c.categoryIdentifier = restartCategory }
-        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: c, trigger: nil))
+        if let reveal { c.userInfo["report"] = reveal.path }
+        if offerRestart {
+            c.categoryIdentifier = restartCategory
+            c.userInfo["kind"] = "detect"
+        }
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: c, trigger: nil))
     }
 }
