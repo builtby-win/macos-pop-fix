@@ -174,7 +174,7 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
 
     func applicationDidFinishLaunching(_ note: Notification) {
         UNUserNotificationCenter.current().delegate = self
-        Notifier.authorize()
+        Notifier.authorize { [self] in warnNotificationsBlocked() }
         watcher.start()
         queue.async {
             let v = passwordlessRestartEnabled()
@@ -236,6 +236,20 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
         }
     }
 
+    /// macOS blocks PopFix banners (denied, or alerts set to None): nothing would be visible, so say so at launch.
+    func warnNotificationsBlocked() {
+        NSApp.activate(ignoringOtherApps: true)
+        let a = NSAlert()
+        a.messageText = "PopFix notifications are turned off"
+        a.informativeText = "You won't see a banner when audio pops are detected or coreaudiod is restarted. Turn on Allow Notifications and set the alert style to Banners or Alerts for PopFix."
+        a.addButton(withTitle: "Open Notification Settings")
+        a.addButton(withTitle: "Later")
+        if a.runModal() == .alertFirstButtonReturn,
+           let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     /// Explains and installs the passwordless restart rule, then turns auto-restart on. Shown once at launch
     /// when the rule is missing, and whenever the user re-enrolls from the menu (`force`).
     func promptPasswordlessSetup(force: Bool = false) {
@@ -277,7 +291,7 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
                 }
             }
             guard ok else { return }
-            // Remove the "Restarting…" banner and post a fresh one: replacing in place updates silently, no banner.
+            // Clear the "Restarting…" notification; the result is posted as a new one so it alerts on its own.
             UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [restartID])
             Notifier.post("Restarted coreaudiod", "\(reason). Saving diagnostics to ~/Library/Logs/PopFix.", reveal: url)
             Report.write(to: url, reason: reason, count: n, action: "restarted coreaudiod", snapshot: snap)

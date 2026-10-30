@@ -102,13 +102,18 @@ enum Notifier {
     static let restartCategory = "popfix.restart"
     static let restartAction = "popfix.restart-now"
 
-    static func authorize() {
+    /// `onBlocked` runs on the main queue when macOS won't show PopFix banners (permission denied or alerts off).
+    static func authorize(onBlocked: @escaping () -> Void) {
         let center = UNUserNotificationCenter.current()
         let restart = UNNotificationAction(identifier: restartAction, title: "Restart audio now", options: [])
         center.setNotificationCategories([
             UNNotificationCategory(identifier: restartCategory, actions: [restart], intentIdentifiers: [])
         ])
-        center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            center.getNotificationSettings { s in
+                if !granted || s.alertStyle == .none { DispatchQueue.main.async(execute: onBlocked) }
+            }
+        }
     }
 
     /// `offerRestart` adds a "Restart audio now" button and makes a plain click restart too (handled in App's
@@ -118,6 +123,7 @@ enum Notifier {
         let c = UNMutableNotificationContent()
         c.title = title
         c.body = body
+        c.sound = .default
         if let reveal { c.userInfo["report"] = reveal.path }
         if offerRestart {
             c.categoryIdentifier = restartCategory
