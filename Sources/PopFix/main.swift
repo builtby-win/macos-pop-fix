@@ -277,7 +277,9 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
                 }
             }
             guard ok else { return }
-            Notifier.post("Restarted coreaudiod", "\(reason). Saving diagnostics to ~/Library/Logs/PopFix.", reveal: url, id: restartID)
+            // Remove the "Restarting…" banner and post a fresh one: replacing in place updates silently, no banner.
+            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [restartID])
+            Notifier.post("Restarted coreaudiod", "\(reason). Saving diagnostics to ~/Library/Logs/PopFix.", reveal: url)
             Report.write(to: url, reason: reason, count: n, action: "restarted coreaudiod", snapshot: snap)
         }
     }
