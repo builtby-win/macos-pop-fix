@@ -325,7 +325,12 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
     }
 
     @objc func restartNow() { restart(interactive: true, reason: "Manual restart") }
-    @objc func toggleAuto() { autoRestart.toggle(); render() }
+    /// Turning it on without the sudoers rule would be a silent half-enrolled state, so go through setup instead.
+    @objc func toggleAuto() {
+        if !autoRestart && !passwordless { promptPasswordlessSetup(force: true); return }
+        autoRestart.toggle()
+        render()
+    }
     @objc func setThreshold(_ s: NSMenuItem) {
         if let t = s.representedObject as? Int { threshold = t; render() }
     }
