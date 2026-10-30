@@ -280,9 +280,9 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
 
     func render() {
         let b = item.button
-        b?.title = spiking ? " ⚠︎ \(count)" : " PopFix"
+        b?.title = spiking ? " ⚠︎ \(count)" : ""
         b?.image = Icons.menuBar
-        b?.imagePosition = .imageLeading
+        b?.imagePosition = spiking ? .imageLeading : .imageOnly
 
         let m = NSMenu()
         m.addItem(withTitle: "Audio overloads (last \(Int(window))s): \(count)", action: nil, keyEquivalent: "").isEnabled = false
