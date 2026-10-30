@@ -194,7 +194,11 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
 
     func userNotificationCenter(_ c: UNUserNotificationCenter, didReceive r: UNNotificationResponse,
                                 withCompletionHandler done: @escaping () -> Void) {
-        if let path = r.notification.request.content.userInfo["report"] as? String {
+        if r.actionIdentifier == Notifier.restartAction {
+            DispatchQueue.main.async { [self] in
+                if !restarting { restart(interactive: true, reason: "Restart from notification") }
+            }
+        } else if let path = r.notification.request.content.userInfo["report"] as? String {
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
         }
         done()
@@ -217,13 +221,15 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
         render()
     }
 
-    /// Spike seen but no restart happened: notify and save a report so a hidden menu bar icon doesn't mean silence.
+    /// Spike seen but no restart happened: tell the user right away (with a restart button) and save a report.
     func logDetection(why: String) {
         let n = count
         let url = Report.newURL()
+        Notifier.post("Audio popping detected",
+                      "\(n) overloads/\(Int(window))s; not restarted automatically (\(why)). Click \"Restart audio now\" to fix it.",
+                      reveal: url, offerRestart: true)
         queue.async {
             let snap = Report.snapshot()
-            Notifier.post("Audio pops detected", "\(n) overloads/\(Int(window))s; not restarted (\(why)). Saving diagnostics to ~/Library/Logs/PopFix.", reveal: url)
             Report.write(to: url, reason: "Pop detected, not restarted: \(why) (\(n) overloads/\(Int(window))s)", count: n, action: "none (detected only)", snapshot: snap)
         }
     }
@@ -246,6 +252,9 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
         cooldownUntil = Date().addingTimeInterval(cooldown)
         let n = count
         let url = Report.newURL()
+        if !interactive {
+            Notifier.post("Audio popping detected", "\(n) overloads/\(Int(window))s. Restarting audio automatically…")
+        }
         queue.async { [self] in
             let snap = Report.snapshot()
             let ok = restartCoreaudiod(interactive: interactive)

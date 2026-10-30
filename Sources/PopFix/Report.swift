@@ -99,15 +99,25 @@ enum Report {
 }
 
 enum Notifier {
+    static let restartCategory = "popfix.restart"
+    static let restartAction = "popfix.restart-now"
+
     static func authorize() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        let center = UNUserNotificationCenter.current()
+        let restart = UNNotificationAction(identifier: restartAction, title: "Restart audio now", options: [])
+        center.setNotificationCategories([
+            UNNotificationCategory(identifier: restartCategory, actions: [restart], intentIdentifiers: [])
+        ])
+        center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
-    static func post(_ title: String, _ body: String, reveal: URL? = nil) {
+    /// `offerRestart` adds a "Restart audio now" button (handled in App's notification delegate).
+    static func post(_ title: String, _ body: String, reveal: URL? = nil, offerRestart: Bool = false) {
         let c = UNMutableNotificationContent()
         c.title = title
         c.body = body
         if let reveal { c.userInfo = ["report": reveal.path] }
+        if offerRestart { c.categoryIdentifier = restartCategory }
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: c, trigger: nil))
     }
 }
