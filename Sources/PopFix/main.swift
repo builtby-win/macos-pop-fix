@@ -1,4 +1,5 @@
 import AppKit
+import UserNotifications
 
 // MARK: - Process helpers
 
@@ -123,9 +124,17 @@ if CommandLine.arguments.contains("--probe") {
     exit(0)
 }
 
+// Writes a diagnostic report without restarting anything (for testing / manual bug reports).
+if CommandLine.arguments.contains("--report") {
+    let url = Report.newURL()
+    Report.write(to: url, reason: "Manual report (--report)", count: 0, action: "none (report only)", snapshot: Report.snapshot())
+    print(url.path)
+    exit(0)
+}
+
 // MARK: - App
 
-final class App: NSObject, NSApplicationDelegate {
+final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     let defaults = UserDefaults.standard
     let queue = DispatchQueue(label: "popfix.restart")
@@ -149,8 +158,11 @@ final class App: NSObject, NSApplicationDelegate {
     var cooldownUntil = Date.distantPast
     var lastRestart: Date?
     var passwordless = false
+    var failureNotified = false
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        UNUserNotificationCenter.current().delegate = self
+        Notifier.authorize()
         watcher.start()
         refreshPasswordless()
         Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [self] _ in tick() }
@@ -159,22 +171,48 @@ final class App: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ note: Notification) { watcher.stop() }
 
+    func userNotificationCenter(_ c: UNUserNotificationCenter, willPresent n: UNNotification,
+                                withCompletionHandler done: @escaping (UNNotificationPresentationOptions) -> Void) {
+        done([.banner, .sound])
+    }
+
+    func userNotificationCenter(_ c: UNUserNotificationCenter, didReceive r: UNNotificationResponse,
+                                withCompletionHandler done: @escaping () -> Void) {
+        if let path = r.notification.request.content.userInfo["report"] as? String {
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+        }
+        done()
+    }
+
     func tick() {
         count = watcher.count(within: window)
         spiking = count >= threshold
-        if spiking && autoRestart && !restarting && Date() >= cooldownUntil { restart(interactive: false) }
+        if !spiking { failureNotified = false }
+        if spiking && autoRestart && !restarting && Date() >= cooldownUntil {
+            restart(interactive: false, reason: "Auto-restart (\(count) overloads/\(Int(window))s)")
+        }
         render()
     }
 
-    func restart(interactive: Bool) {
+    func restart(interactive: Bool, reason: String) {
         restarting = true
         cooldownUntil = Date().addingTimeInterval(cooldown)
+        let n = count
+        let url = Report.newURL()
         queue.async { [self] in
+            let snap = Report.snapshot()
             let ok = restartCoreaudiod(interactive: interactive)
             DispatchQueue.main.async {
                 self.restarting = false
                 if ok { self.lastRestart = Date() }
+                if !ok && !interactive && !self.failureNotified {
+                    self.failureNotified = true
+                    Notifier.post("Audio pops detected", "Auto-restart failed. Enable passwordless restart from the PopFix menu.")
+                }
             }
+            guard ok else { return }
+            Notifier.post("Restarted coreaudiod", "\(reason). Saving diagnostics to ~/Library/Logs/PopFix.", reveal: url)
+            Report.write(to: url, reason: reason, count: n, action: "restarted coreaudiod", snapshot: snap)
         }
     }
 
@@ -187,8 +225,7 @@ final class App: NSObject, NSApplicationDelegate {
     func render() {
         let b = item.button
         b?.title = spiking ? " ⚠︎ \(count)" : ""
-        b?.image = NSImage(systemSymbolName: spiking ? "speaker.wave.3.fill" : "speaker.wave.2",
-                           accessibilityDescription: "coreaudiod watcher")
+        b?.image = Icons.menuBar
         b?.imagePosition = .imageLeading
 
         let m = NSMenu()
@@ -214,11 +251,14 @@ final class App: NSObject, NSApplicationDelegate {
                            action: #selector(togglePasswordless), keyEquivalent: "")
         pw.target = self
         m.addItem(.separator())
+        m.addItem(withTitle: "Show diagnostic reports", action: #selector(openLogs), keyEquivalent: "").target = self
+        m.addItem(withTitle: "Report to Apple…", action: #selector(reportToApple), keyEquivalent: "").target = self
+        m.addItem(.separator())
         m.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         item.menu = m
     }
 
-    @objc func restartNow() { restart(interactive: true) }
+    @objc func restartNow() { restart(interactive: true, reason: "Manual restart") }
     @objc func toggleAuto() { autoRestart.toggle(); render() }
     @objc func setThreshold(_ s: NSMenuItem) {
         if let t = s.representedObject as? Int { threshold = t; render() }
@@ -231,6 +271,9 @@ final class App: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async { self.passwordless = v; self.render() }
         }
     }
+
+    @objc func openLogs() { Report.revealLatest() }
+    @objc func reportToApple() { Report.reportToApple() }
 }
 
 let app = NSApplication.shared
