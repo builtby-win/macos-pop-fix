@@ -91,8 +91,12 @@ func restartCoreaudiod(interactive: Bool) -> Bool {
     return run("/usr/bin/osascript", ["-e", script]).status == 0
 }
 
+/// `sudo -n -l <cmd>` exits 0 for any allowed command, password-protected or not, so inspect the full
+/// listing for a NOPASSWD entry that covers it.
 func passwordlessRestartEnabled() -> Bool {
-    run("/usr/bin/sudo", ["-n", "-l", "/usr/bin/killall", "coreaudiod"]).status == 0
+    run("/usr/bin/sudo", ["-n", "-l"]).out.split(separator: "\n").contains {
+        $0.contains("NOPASSWD:") && ($0.contains("/usr/bin/killall coreaudiod") || $0.contains("NOPASSWD: ALL"))
+    }
 }
 
 func installSudoersRule() -> Bool {
@@ -132,6 +136,13 @@ if CommandLine.arguments.contains("--report") {
     exit(0)
 }
 
+// One-time admin approval for passwordless auto-restart, without needing the menu bar item.
+if CommandLine.arguments.contains("--enable-passwordless") {
+    let ok = passwordlessRestartEnabled() || installSudoersRule()
+    print(ok ? "passwordless restart enabled" : "failed")
+    exit(ok ? 0 : 1)
+}
+
 // MARK: - App
 
 final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
@@ -165,7 +176,10 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
         UNUserNotificationCenter.current().delegate = self
         Notifier.authorize()
         watcher.start()
-        refreshPasswordless()
+        queue.async {
+            let v = passwordlessRestartEnabled()
+            DispatchQueue.main.async { self.passwordless = v; if !v { self.promptPasswordlessSetup() } }
+        }
         Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [self] _ in tick() }
         render()
     }
@@ -189,25 +203,41 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
         count = watcher.count(within: window)
         spiking = count >= threshold
         if !spiking { failureNotified = false; spikeLogged = false }
-        if spiking && autoRestart && !restarting && Date() >= cooldownUntil {
-            spikeLogged = true
-            restart(interactive: false, reason: "Auto-restart (\(count) overloads/\(Int(window))s)")
-        } else if spiking && !autoRestart && !spikeLogged {
-            spikeLogged = true
-            logDetection()
+        if spiking && !restarting {
+            if autoRestart && passwordless {
+                if Date() >= cooldownUntil {
+                    restart(interactive: false, reason: "Auto-restart (\(count) overloads/\(Int(window))s)")
+                }
+            } else if !spikeLogged {
+                spikeLogged = true
+                logDetection(why: autoRestart ? "passwordless restart isn't set up" : "auto-restart is off")
+            }
         }
         render()
     }
 
-    /// Spike seen while auto-restart is off: notify and save a report so a hidden menu bar icon doesn't mean silence.
-    func logDetection() {
+    /// Spike seen but no restart happened: notify and save a report so a hidden menu bar icon doesn't mean silence.
+    func logDetection(why: String) {
         let n = count
         let url = Report.newURL()
         queue.async {
             let snap = Report.snapshot()
-            Notifier.post("Audio pops detected", "\(n) overloads/\(Int(window))s. Auto-restart is off. Saving diagnostics to ~/Library/Logs/PopFix.", reveal: url)
-            Report.write(to: url, reason: "Pop detected, auto-restart off (\(n) overloads/\(Int(window))s)", count: n, action: "none (detected only)", snapshot: snap)
+            Notifier.post("Audio pops detected", "\(n) overloads/\(Int(window))s; not restarted (\(why)). Saving diagnostics to ~/Library/Logs/PopFix.", reveal: url)
+            Report.write(to: url, reason: "Pop detected, not restarted: \(why) (\(n) overloads/\(Int(window))s)", count: n, action: "none (detected only)", snapshot: snap)
         }
+    }
+
+    /// Auto-restart is on by default but can't work without the sudoers rule; ask once at launch.
+    func promptPasswordlessSetup() {
+        guard autoRestart, !defaults.bool(forKey: "passwordlessPrompted") else { return }
+        defaults.set(true, forKey: "passwordlessPrompted")
+        NSApp.activate(ignoringOtherApps: true)
+        let a = NSAlert()
+        a.messageText = "Enable automatic restart?"
+        a.informativeText = "PopFix restarts coreaudiod when audio pops, but that needs a one-time admin approval. It installs a rule allowing only `killall coreaudiod` without a password. Until then PopFix only logs pops."
+        a.addButton(withTitle: "Enable…")
+        a.addButton(withTitle: "Not now")
+        if a.runModal() == .alertFirstButtonReturn { togglePasswordless() }
     }
 
     func restart(interactive: Bool, reason: String) {
@@ -223,7 +253,7 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
                 if ok { self.lastRestart = Date() }
                 if !ok && !interactive && !self.failureNotified {
                     self.failureNotified = true
-                    Notifier.post("Audio pops detected", "Auto-restart failed. Enable passwordless restart from the PopFix menu.")
+                    self.logDetection(why: "restart failed")
                 }
             }
             guard ok else { return }
