@@ -19,9 +19,9 @@ Restarting `coreaudiod` (`sudo killall coreaudiod`) is the known workaround. Pop
 
 ## Install
 
-Download `PopFix.zip` from [Releases](../../releases), unzip, move `PopFix.app` to `/Applications`, open it. Needs macOS 13+.
+Needs macOS 13+. Notarized binaries will be attached to [Releases](../../releases); until then, build from source:
 
-Or build from source (Swift toolchain / Xcode CLT):
+(Swift toolchain / Xcode CLT required)
 
 ```sh
 ./build.sh && open PopFix.app
