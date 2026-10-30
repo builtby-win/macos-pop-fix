@@ -16,15 +16,68 @@ func run(_ path: String, _ args: [String]) -> (status: Int32, out: String) {
     return (p.terminationStatus, String(decoding: data, as: UTF8.self))
 }
 
-/// coreaudiod runs as _coreaudiod, so proc_pid_rusage/ps can't read it unprivileged.
-/// /usr/bin/top is setuid and reports it; the first sample is a since-boot average, so take the second.
-func coreaudiodCPU() -> Double? {
-    let pid = run("/usr/bin/pgrep", ["-x", "coreaudiod"]).out
-        .split(separator: "\n").first.map(String.init)
-    guard let pid, Int(pid) != nil else { return nil }
-    let out = run("/usr/bin/top", ["-l", "2", "-s", "1", "-pid", pid, "-stats", "cpu"]).out
-    guard let last = out.split(separator: "\n").last else { return nil }
-    return Double(last.trimmingCharacters(in: .whitespaces))
+/// Counts coreaudiod "Audio IO Overload" events (the HAL log line emitted each time an I/O cycle
+/// misses its deadline, i.e. an audible pop). Readable unprivileged via `log stream`.
+final class OverloadWatcher {
+    static let marker = "HALS_OverloadMessage.cpp:138"   // one per overload; excludes log's filter banner
+    private let lock = NSLock()
+    private var stamps: [Date] = []
+    private var carry = ""
+    private var stopped = false
+    private var proc: Process?
+
+    func start() {
+        lock.lock(); defer { lock.unlock() }
+        stopped = false
+        launch()
+    }
+
+    private func launch() {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/log")
+        p.arguments = ["stream", "--style", "compact", "--predicate",
+                       "process == \"coreaudiod\" AND eventMessage CONTAINS \"Audio IO Overload\""]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = FileHandle.nullDevice
+        pipe.fileHandleForReading.readabilityHandler = { [weak self] h in
+            let d = h.availableData
+            if d.isEmpty { h.readabilityHandler = nil; return }
+            self?.ingest(String(decoding: d, as: UTF8.self))
+        }
+        p.terminationHandler = { [weak self] _ in
+            guard let self else { return }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 5) {
+                self.lock.lock(); defer { self.lock.unlock() }
+                if !self.stopped { self.launch() }
+            }
+        }
+        do { try p.run(); proc = p } catch { proc = nil }
+    }
+
+    private func ingest(_ chunk: String) {
+        lock.lock(); defer { lock.unlock() }
+        carry += chunk
+        var lines = carry.split(separator: "\n", omittingEmptySubsequences: false)
+        carry = String(lines.removeLast())
+        let now = Date()
+        for l in lines where l.contains(Self.marker) { stamps.append(now) }
+    }
+
+    /// Overloads seen in the last `window` seconds.
+    func count(within window: TimeInterval) -> Int {
+        lock.lock(); defer { lock.unlock() }
+        let cutoff = Date().addingTimeInterval(-60)
+        stamps.removeAll { $0 < cutoff }
+        let c = Date().addingTimeInterval(-window)
+        return stamps.reduce(0) { $0 + ($1 >= c ? 1 : 0) }
+    }
+
+    func stop() {
+        lock.lock(); defer { lock.unlock() }
+        stopped = true
+        proc?.terminate()
+    }
 }
 
 let sudoersPath = "/etc/sudoers.d/macos-pop-fix"
@@ -57,10 +110,16 @@ func removeSudoersRule() -> Bool {
 
 // MARK: - CLI probe
 
+let window: TimeInterval = 10
+
 if CommandLine.arguments.contains("--probe") {
-    for _ in 0..<5 {
-        print(coreaudiodCPU().map { String(format: "%.1f%%", $0) } ?? "coreaudiod not found / unreadable")
+    let w = OverloadWatcher()
+    w.start()
+    for _ in 0..<20 {
+        Thread.sleep(forTimeInterval: 1)
+        print("overloads in last \(Int(window))s: \(w.count(within: window))")
     }
+    w.stop()
     exit(0)
 }
 
@@ -69,62 +128,53 @@ if CommandLine.arguments.contains("--probe") {
 final class App: NSObject, NSApplicationDelegate {
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     let defaults = UserDefaults.standard
-    let queue = DispatchQueue(label: "popfix.sampler")
+    let queue = DispatchQueue(label: "popfix.restart")
+    let watcher = OverloadWatcher()
 
-    let thresholds: [Double] = [8, 10, 15, 30]
-    let sustainedSamples = 5          // consecutive ~3s samples above threshold
-    let cooldown: TimeInterval = 30   // after a restart
+    let thresholds = [3, 10, 30, 100]   // overloads per 10s window
+    let cooldown: TimeInterval = 30     // after a restart
 
-    var threshold: Double {
-        get { defaults.object(forKey: "threshold") as? Double ?? 10 }
-        set { defaults.set(newValue, forKey: "threshold") }
+    var threshold: Int {
+        get { defaults.object(forKey: "overloadThreshold") as? Int ?? 10 }
+        set { defaults.set(newValue, forKey: "overloadThreshold") }
     }
     var autoRestart: Bool {
         get { defaults.object(forKey: "autoRestart") as? Bool ?? false }
         set { defaults.set(newValue, forKey: "autoRestart") }
     }
 
-    // Touched only on `queue` unless noted.
-    var over = 0
-    var cooldownUntil = Date.distantPast
-    // Touched only on main.
-    var lastCPU: Double?
+    var count = 0
     var spiking = false
+    var restarting = false
+    var cooldownUntil = Date.distantPast
     var lastRestart: Date?
     var passwordless = false
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        watcher.start()
         refreshPasswordless()
+        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [self] _ in tick() }
         render()
-        sample()
     }
 
-    func sample() {
+    func applicationWillTerminate(_ note: Notification) { watcher.stop() }
+
+    func tick() {
+        count = watcher.count(within: window)
+        spiking = count >= threshold
+        if spiking && autoRestart && !restarting && Date() >= cooldownUntil { restart(interactive: false) }
+        render()
+    }
+
+    func restart(interactive: Bool) {
+        restarting = true
+        cooldownUntil = Date().addingTimeInterval(cooldown)
         queue.async { [self] in
-            let cpu = coreaudiodCPU()
-            var restartNow = false
-            var isSpiking = false
-            if let cpu, cpu >= threshold {
-                over += 1
-                isSpiking = over >= sustainedSamples
-            } else {
-                over = 0
-            }
-            if isSpiking && Date() >= cooldownUntil {
-                if autoRestart { restartNow = true; cooldownUntil = Date().addingTimeInterval(cooldown) }
-            }
-            if restartNow {
-                over = 0
-                let ok = restartCoreaudiod(interactive: false)
-                DispatchQueue.main.async { if ok { self.lastRestart = Date() }; self.spiking = !ok }
-            }
+            let ok = restartCoreaudiod(interactive: interactive)
             DispatchQueue.main.async {
-                self.lastCPU = cpu
-                if !restartNow { self.spiking = isSpiking }
-                self.render()
+                self.restarting = false
+                if ok { self.lastRestart = Date() }
             }
-            Thread.sleep(forTimeInterval: 1)
-            DispatchQueue.main.async { self.sample() }
         }
     }
 
@@ -136,14 +186,13 @@ final class App: NSObject, NSApplicationDelegate {
 
     func render() {
         let b = item.button
-        b?.title = spiking ? " ⚠︎ \(Int(lastCPU ?? 0))%" : ""
+        b?.title = spiking ? " ⚠︎ \(count)" : ""
         b?.image = NSImage(systemSymbolName: spiking ? "speaker.wave.3.fill" : "speaker.wave.2",
                            accessibilityDescription: "coreaudiod watcher")
         b?.imagePosition = .imageLeading
 
         let m = NSMenu()
-        let status = lastCPU.map { String(format: "coreaudiod CPU: %.1f%%", $0) } ?? "coreaudiod: not found"
-        m.addItem(withTitle: status, action: nil, keyEquivalent: "").isEnabled = false
+        m.addItem(withTitle: "Audio overloads (last \(Int(window))s): \(count)", action: nil, keyEquivalent: "").isEnabled = false
         if let t = lastRestart {
             let f = DateFormatter(); f.timeStyle = .medium
             m.addItem(withTitle: "Last restart: \(f.string(from: t))", action: nil, keyEquivalent: "").isEnabled = false
@@ -151,15 +200,15 @@ final class App: NSObject, NSApplicationDelegate {
         m.addItem(.separator())
         m.addItem(withTitle: "Restart coreaudiod now", action: #selector(restartNow), keyEquivalent: "r").target = self
 
-        let auto = m.addItem(withTitle: "Auto-restart on spike", action: #selector(toggleAuto), keyEquivalent: "")
+        let auto = m.addItem(withTitle: "Auto-restart on pops", action: #selector(toggleAuto), keyEquivalent: "")
         auto.target = self; auto.state = autoRestart ? .on : .off
 
         let sub = NSMenu()
         for t in thresholds {
-            let i = sub.addItem(withTitle: "≥ \(Int(t))% for \(sustainedSamples) samples", action: #selector(setThreshold(_:)), keyEquivalent: "")
+            let i = sub.addItem(withTitle: "≥ \(t) overloads / \(Int(window))s", action: #selector(setThreshold(_:)), keyEquivalent: "")
             i.target = self; i.representedObject = t; i.state = t == threshold ? .on : .off
         }
-        m.addItem(withTitle: "Spike threshold", action: nil, keyEquivalent: "").submenu = sub
+        m.addItem(withTitle: "Pop threshold", action: nil, keyEquivalent: "").submenu = sub
 
         let pw = m.addItem(withTitle: passwordless ? "Remove passwordless restart" : "Enable passwordless restart…",
                            action: #selector(togglePasswordless), keyEquivalent: "")
@@ -169,23 +218,15 @@ final class App: NSObject, NSApplicationDelegate {
         item.menu = m
     }
 
-    @objc func restartNow() {
-        queue.async { [self] in
-            over = 0
-            cooldownUntil = Date().addingTimeInterval(cooldown)
-            let ok = restartCoreaudiod(interactive: true)
-            DispatchQueue.main.async { if ok { self.lastRestart = Date() }; self.render() }
-        }
-    }
+    @objc func restartNow() { restart(interactive: true) }
     @objc func toggleAuto() { autoRestart.toggle(); render() }
     @objc func setThreshold(_ s: NSMenuItem) {
-        if let t = s.representedObject as? Double { threshold = t; render() }
+        if let t = s.representedObject as? Int { threshold = t; render() }
     }
     @objc func togglePasswordless() {
         let enabled = passwordless
         queue.async { [self] in
             _ = enabled ? removeSudoersRule() : installSudoersRule()
-            refreshPasswordless()
             let v = passwordlessRestartEnabled()
             DispatchQueue.main.async { self.passwordless = v; self.render() }
         }
