@@ -148,7 +148,7 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
         set { defaults.set(newValue, forKey: "overloadThreshold") }
     }
     var autoRestart: Bool {
-        get { defaults.object(forKey: "autoRestart") as? Bool ?? false }
+        get { defaults.object(forKey: "autoRestart") as? Bool ?? true }
         set { defaults.set(newValue, forKey: "autoRestart") }
     }
 
@@ -159,6 +159,7 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
     var lastRestart: Date?
     var passwordless = false
     var failureNotified = false
+    var spikeLogged = false   // one detection report per spike episode
 
     func applicationDidFinishLaunching(_ note: Notification) {
         UNUserNotificationCenter.current().delegate = self
@@ -187,11 +188,26 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
     func tick() {
         count = watcher.count(within: window)
         spiking = count >= threshold
-        if !spiking { failureNotified = false }
+        if !spiking { failureNotified = false; spikeLogged = false }
         if spiking && autoRestart && !restarting && Date() >= cooldownUntil {
+            spikeLogged = true
             restart(interactive: false, reason: "Auto-restart (\(count) overloads/\(Int(window))s)")
+        } else if spiking && !autoRestart && !spikeLogged {
+            spikeLogged = true
+            logDetection()
         }
         render()
+    }
+
+    /// Spike seen while auto-restart is off: notify and save a report so a hidden menu bar icon doesn't mean silence.
+    func logDetection() {
+        let n = count
+        let url = Report.newURL()
+        queue.async {
+            let snap = Report.snapshot()
+            Notifier.post("Audio pops detected", "\(n) overloads/\(Int(window))s. Auto-restart is off. Saving diagnostics to ~/Library/Logs/PopFix.", reveal: url)
+            Report.write(to: url, reason: "Pop detected, auto-restart off (\(n) overloads/\(Int(window))s)", count: n, action: "none (detected only)", snapshot: snap)
+        }
     }
 
     func restart(interactive: Bool, reason: String) {
@@ -224,7 +240,7 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
 
     func render() {
         let b = item.button
-        b?.title = spiking ? " ⚠︎ \(count)" : ""
+        b?.title = spiking ? " ⚠︎ \(count)" : " PopFix"
         b?.image = Icons.menuBar
         b?.imagePosition = .imageLeading
 

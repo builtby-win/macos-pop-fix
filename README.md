@@ -13,7 +13,7 @@ Restarting `coreaudiod` (`sudo killall coreaudiod`) is the known workaround. Pop
 - **Not CPU-based:** `coreaudiod` CPU rises while popping, but it's a symptom of system load, so it's a poor trigger.
 - **Restart:** `killall coreaudiod` needs root.
   - *Restart coreaudiod now* prompts for your admin password.
-  - *Auto-restart on pops* (off by default) only uses passwordless `sudo -n` and never prompts. Enable it once via *Enable passwordless restart…*, which installs `/etc/sudoers.d/macos-pop-fix` allowing exactly `/usr/bin/killall coreaudiod` for your user (validated with `visudo -c`; removable from the same menu item). 30s cooldown.
+  - *Auto-restart on pops* (on by default) only uses passwordless `sudo -n` and never prompts. Until you enable passwordless restart once via *Enable passwordless restart…*, auto-restart can't run and PopFix notifies you instead. That item installs `/etc/sudoers.d/macos-pop-fix` allowing exactly `/usr/bin/killall coreaudiod` for your user (validated with `visudo -c`; removable from the same menu item). 30s cooldown.
 - **Notification + report:** each restart posts a notification and writes `~/Library/Logs/PopFix/report-<timestamp>.txt` containing macOS/build/model, load average, memory pressure, top CPU processes, and a summary of the last 3 minutes of `coreaudiod` overload events (which client app was overloading, causes, sample lines). Clicking the notification reveals the file.
 - **Reporting to Apple:** *Report to Apple…* opens Feedback Assistant and reveals the newest report to attach. PopFix never uploads anything itself; review the file first (it contains process names).
 
