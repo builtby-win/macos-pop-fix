@@ -29,8 +29,10 @@ func coreaudiodCPU() -> Double? {
 
 let sudoersPath = "/etc/sudoers.d/macos-pop-fix"
 
-func restartCoreaudiod() -> Bool {
+/// Auto path (`interactive: false`) only tries passwordless sudo; the admin prompt is manual-only.
+func restartCoreaudiod(interactive: Bool) -> Bool {
     if run("/usr/bin/sudo", ["-n", "/usr/bin/killall", "coreaudiod"]).status == 0 { return true }
+    guard interactive else { return false }
     let script = "do shell script \"/usr/bin/killall coreaudiod\" with administrator privileges"
     return run("/usr/bin/osascript", ["-e", script]).status == 0
 }
@@ -69,16 +71,16 @@ final class App: NSObject, NSApplicationDelegate {
     let defaults = UserDefaults.standard
     let queue = DispatchQueue(label: "popfix.sampler")
 
-    let thresholds: [Double] = [20, 30, 50, 80]
-    let sustainedSamples = 3          // consecutive samples above threshold
+    let thresholds: [Double] = [8, 10, 15, 30]
+    let sustainedSamples = 5          // consecutive ~3s samples above threshold
     let cooldown: TimeInterval = 30   // after a restart
 
     var threshold: Double {
-        get { defaults.object(forKey: "threshold") as? Double ?? 30 }
+        get { defaults.object(forKey: "threshold") as? Double ?? 10 }
         set { defaults.set(newValue, forKey: "threshold") }
     }
     var autoRestart: Bool {
-        get { defaults.object(forKey: "autoRestart") as? Bool ?? true }
+        get { defaults.object(forKey: "autoRestart") as? Bool ?? false }
         set { defaults.set(newValue, forKey: "autoRestart") }
     }
 
@@ -113,8 +115,8 @@ final class App: NSObject, NSApplicationDelegate {
             }
             if restartNow {
                 over = 0
-                let ok = restartCoreaudiod()
-                DispatchQueue.main.async { if ok { self.lastRestart = Date() }; self.spiking = false }
+                let ok = restartCoreaudiod(interactive: false)
+                DispatchQueue.main.async { if ok { self.lastRestart = Date() }; self.spiking = !ok }
             }
             DispatchQueue.main.async {
                 self.lastCPU = cpu
@@ -171,7 +173,7 @@ final class App: NSObject, NSApplicationDelegate {
         queue.async { [self] in
             over = 0
             cooldownUntil = Date().addingTimeInterval(cooldown)
-            let ok = restartCoreaudiod()
+            let ok = restartCoreaudiod(interactive: true)
             DispatchQueue.main.async { if ok { self.lastRestart = Date() }; self.render() }
         }
     }
