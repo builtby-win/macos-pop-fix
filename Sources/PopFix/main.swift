@@ -19,7 +19,7 @@ func run(_ path: String, _ args: [String]) -> (status: Int32, out: String) {
 /// Counts coreaudiod "Audio IO Overload" events (the HAL log line emitted each time an I/O cycle
 /// misses its deadline, i.e. an audible pop). Readable unprivileged via `log stream`.
 final class OverloadWatcher {
-    static let marker = "HALS_OverloadMessage.cpp:138"   // one per overload; excludes log's filter banner
+    static let marker = "Audio IO Overload thread:"   // one per overload; the filter banner lacks "thread:"
     private let lock = NSLock()
     private var stamps: [Date] = []
     private var carry = ""
