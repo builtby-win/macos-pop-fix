@@ -180,7 +180,8 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
             let v = passwordlessRestartEnabled()
             DispatchQueue.main.async { self.passwordless = v; if !v { self.promptPasswordlessSetup() } }
         }
-        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [self] _ in tick() }
+        // .common so detection keeps ticking while the first-launch alert's modal loop is open.
+        RunLoop.main.add(Timer(timeInterval: 1, repeats: true) { [self] _ in tick() }, forMode: .common)
         render()
     }
 
