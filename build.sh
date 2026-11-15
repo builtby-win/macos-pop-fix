@@ -16,11 +16,16 @@ while [ $# -gt 0 ]; do
 done
 
 swift build -c release
+swift build -c release --product MediaRemoteAdapter
 APP=PopFix.app
 rm -rf "$APP" PopFix.zip
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
 cp .build/release/PopFix "$APP/Contents/MacOS/PopFix"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+# Now Playing bridge: perl loads this dylib and runs run.pl (see NowPlaying in main.swift).
+cp .build/release/libMediaRemoteAdapter.dylib "$APP/Contents/Frameworks/"
+cp .build/checkouts/mediaremote-adapter/Sources/MediaRemoteAdapter/Resources/run.pl "$APP/Contents/Resources/"
+cp .build/checkouts/mediaremote-adapter/LICENSE "$APP/Contents/Resources/mediaremote-adapter-LICENSE.txt"
 VERSION=$(cat VERSION)
 cat > "$APP/Contents/Info.plist" <<PL
 <?xml version="1.0" encoding="UTF-8"?>
@@ -42,6 +47,7 @@ PL
 if [ "$SIGN" = "-" ]; then
   codesign --force --sign - "$APP"
 else
+  codesign --force --options runtime --timestamp --sign "$SIGN" "$APP/Contents/Frameworks/libMediaRemoteAdapter.dylib"
   codesign --force --options runtime --timestamp --sign "$SIGN" "$APP"
   codesign --verify --strict --verbose=2 "$APP"
   ditto -c -k --keepParent "$APP" PopFix.zip

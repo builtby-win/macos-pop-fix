@@ -99,15 +99,36 @@ enum Report {
 }
 
 enum Notifier {
-    static func authorize() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    static let restartCategory = "popfix.restart"
+    static let restartAction = "popfix.restart-now"
+
+    /// `onBlocked` runs on the main queue when macOS won't show PopFix banners (permission denied or alerts off).
+    static func authorize(onBlocked: @escaping () -> Void) {
+        let center = UNUserNotificationCenter.current()
+        let restart = UNNotificationAction(identifier: restartAction, title: "Restart audio now", options: [])
+        center.setNotificationCategories([
+            UNNotificationCategory(identifier: restartCategory, actions: [restart], intentIdentifiers: [])
+        ])
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            center.getNotificationSettings { s in
+                if !granted || s.alertStyle == .none { DispatchQueue.main.async(execute: onBlocked) }
+            }
+        }
     }
 
-    static func post(_ title: String, _ body: String, reveal: URL? = nil) {
+    /// `offerRestart` adds a "Restart audio now" button and makes a plain click restart too (handled in App's
+    /// notification delegate). Posting with an existing `id` replaces that notification.
+    static func post(_ title: String, _ body: String, reveal: URL? = nil, offerRestart: Bool = false,
+                     id: String = UUID().uuidString) {
         let c = UNMutableNotificationContent()
         c.title = title
         c.body = body
-        if let reveal { c.userInfo = ["report": reveal.path] }
-        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: c, trigger: nil))
+        c.sound = .default
+        if let reveal { c.userInfo["report"] = reveal.path }
+        if offerRestart {
+            c.categoryIdentifier = restartCategory
+            c.userInfo["kind"] = "detect"
+        }
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: c, trigger: nil))
     }
 }
