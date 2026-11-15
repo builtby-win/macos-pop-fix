@@ -22,9 +22,13 @@ FEED=https://raw.githubusercontent.com/$REPO/main/appcast.xml
 for _ in 1 2 3 4 5 6 7 8 9 10; do curl -fsSL "$FEED" | grep -q "shortVersionString>$V<" && break; sleep 15; done
 curl -fsSL "$FEED" > /tmp/popfix-feed.xml
 grep -q "shortVersionString>$V<" /tmp/popfix-feed.xml || { echo "feed does not list $V" >&2; exit 1; }
-URL=$(grep -o 'url="[^"]*"' /tmp/popfix-feed.xml | tail -1 | cut -d'"' -f2)
-SIG=$(grep -o 'edSignature="[^"]*"' /tmp/popfix-feed.xml | tail -1 | cut -d'"' -f2)
+LINE=$(grep "/$TAG/PopFix-$V.zip" /tmp/popfix-feed.xml)
+URL=$(echo "$LINE" | grep -o 'url="[^"]*"' | cut -d'"' -f2)
+SIG=$(echo "$LINE" | grep -o 'edSignature="[^"]*"' | cut -d'"' -f2)
+LEN=$(echo "$LINE" | grep -o 'length="[^"]*"' | cut -d'"' -f2)
+[ -n "$URL" ] && [ -n "$SIG" ] || { echo "no enclosure for $V in feed" >&2; exit 1; }
 curl -fsSL -o /tmp/popfix-dl.zip "$URL"
+[ "$LEN" = "$(stat -f%z /tmp/popfix-dl.zip)" ] || { echo "length mismatch" >&2; exit 1; }
 .build/artifacts/sparkle/Sparkle/bin/sign_update --verify /tmp/popfix-dl.zip "$SIG"
 rm -f /tmp/popfix-dl.zip /tmp/popfix-feed.xml "PopFix-$V.zip"
 echo "Released $V; feed verified."
