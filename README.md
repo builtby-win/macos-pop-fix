@@ -29,7 +29,7 @@ brew install --cask builtby-win/tap/popfix
 **Or manually:**
 
 1. [Download PopFix.dmg](https://github.com/builtby-win/macos-pop-fix/releases/latest/download/PopFix.dmg) and open it.
-2. Drag `PopFix.app` onto the Applications shortcut, then open it. Updates arrive automatically (Sparkle); or use the menu → Check for Updates….
+2. Drag `PopFix.app` onto the Applications shortcut, then open it. PopFix updates itself via Sparkle (menu → Check for Updates…).
 3. Optional: System Settings → General → Login Items → add PopFix.
 
 ## Features

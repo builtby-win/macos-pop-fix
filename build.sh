@@ -45,6 +45,7 @@ cat > "$APP/Contents/Info.plist" <<PL
 <key>CFBundleVersion</key><string>$VERSION</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>LSUIElement</key><true/>
+<key>SUEnableAutomaticChecks</key><true/>
 <key>SUFeedURL</key><string>https://raw.githubusercontent.com/builtby-win/macos-pop-fix/main/appcast.xml</string>
 <key>SUPublicEDKey</key><string>HYJ7dSy4TGt+Tw3oog+HO3ozMwjB9CybsytpNK8C6OQ=</string>
 </dict></plist>
