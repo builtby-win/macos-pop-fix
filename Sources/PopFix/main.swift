@@ -1,4 +1,5 @@
 import AppKit
+import Sparkle
 import UserNotifications
 
 // MARK: - Process helpers
@@ -200,6 +201,7 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
     let defaults = UserDefaults.standard
     let queue = DispatchQueue(label: "popfix.restart")
     let watcher = OverloadWatcher()
+    let updater = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
 
     let thresholds = [3, 10, 30, 100]   // overloads per 10s window
     let cooldown: TimeInterval = 30     // after a restart
@@ -389,6 +391,8 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
         m.addItem(withTitle: "Show diagnostic reports", action: #selector(openLogs), keyEquivalent: "").target = self
         m.addItem(withTitle: "Report to Apple…", action: #selector(reportToApple), keyEquivalent: "").target = self
         m.addItem(.separator())
+        let upd = m.addItem(withTitle: "Check for Updates…", action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)), keyEquivalent: "")
+        upd.target = updater
         m.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         item.menu = m
     }

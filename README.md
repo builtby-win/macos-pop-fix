@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/builtby-win/macos-pop-fix/releases/latest/download/PopFix.zip"><b>⬇ Download PopFix.zip</b></a>
+  <a href="https://github.com/builtby-win/macos-pop-fix/releases/latest/download/PopFix.dmg"><b>⬇ Download PopFix.dmg</b></a>
   &nbsp;·&nbsp; macOS 13+ &nbsp;·&nbsp; Apple Silicon
 </p>
 
@@ -28,8 +28,8 @@ brew install --cask builtby-win/tap/popfix
 
 **Or manually:**
 
-1. [Download PopFix.zip](https://github.com/builtby-win/macos-pop-fix/releases/latest/download/PopFix.zip) and unzip.
-2. Drag `PopFix.app` to `/Applications` and open it.
+1. [Download PopFix.dmg](https://github.com/builtby-win/macos-pop-fix/releases/latest/download/PopFix.dmg) and open it.
+2. Drag `PopFix.app` onto the Applications shortcut, then open it. Updates arrive automatically (Sparkle); or use the menu → Check for Updates….
 3. Optional: System Settings → General → Login Items → add PopFix.
 
 ## Features
@@ -75,7 +75,7 @@ Build (Swift toolchain / Xcode CLT):
 ./build.sh && open PopFix.app
 ```
 
-Signed release (hardened runtime, notarized, stapled, produces `PopFix.zip`):
+Signed release (hardened runtime, notarized, stapled, produces `PopFix.zip`, `PopFix.dmg` and the Sparkle `appcast.xml`; upload `PopFix.zip`, `PopFix-<version>.zip` and `PopFix.dmg` to the GitHub release, commit `appcast.xml`):
 
 ```sh
 ./build.sh --sign "Developer ID Application: Name (TEAMID)" --notarize <notarytool-profile>
