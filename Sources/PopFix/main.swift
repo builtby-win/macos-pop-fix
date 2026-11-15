@@ -196,12 +196,14 @@ if CommandLine.arguments.contains("--enable-passwordless") {
 
 // MARK: - App
 
-final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
+final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate, SPUStandardUserDriverDelegate {
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     let defaults = UserDefaults.standard
     let queue = DispatchQueue(label: "popfix.restart")
     let watcher = OverloadWatcher()
-    let updater = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+    // Created in applicationDidFinishLaunching (needs `self` as the user-driver delegate).
+    var updater: SPUStandardUpdaterController!
+    var updateAvailable = false
 
     let thresholds = [3, 10, 30, 100]   // overloads per 10s window
     let cooldown: TimeInterval = 30     // after a restart
@@ -226,6 +228,7 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
 
     func applicationDidFinishLaunching(_ note: Notification) {
         UNUserNotificationCenter.current().delegate = self
+        updater = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: self)
         Notifier.authorize { [self] in warnNotificationsBlocked() }
         watcher.start()
         queue.async {
@@ -234,6 +237,24 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
         }
         // .common so detection keeps ticking while the first-launch alert's modal loop is open.
         RunLoop.main.add(Timer(timeInterval: 1, repeats: true) { [self] _ in tick() }, forMode: .common)
+        render()
+    }
+
+    // MARK: Sparkle gentle reminders (menu-bar apps never come forward for scheduled alerts)
+
+    var supportsGentleScheduledUpdateReminders: Bool { true }
+
+    func standardUserDriverWillHandleShowingUpdate(_ handleShowingUpdate: Bool, forUpdate update: SUAppcastItem, state: SPUUserUpdateState) {
+        guard !state.userInitiated else { return }
+        updateAvailable = true
+        Notifier.post("PopFix update available", "Version \(update.displayVersionString) is ready. Click to review.",
+                      id: "popfix.update", kind: "update")
+        render()
+    }
+
+    func standardUserDriverDidReceiveUserAttention(forUpdate update: SUAppcastItem) {
+        updateAvailable = false
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["popfix.update"])
         render()
     }
 
@@ -252,6 +273,8 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
             DispatchQueue.main.async { [self] in
                 if !restarting { restart(interactive: true, reason: "Restart from notification") }
             }
+        } else if r.actionIdentifier == UNNotificationDefaultActionIdentifier && info["kind"] as? String == "update" {
+            DispatchQueue.main.async { [self] in updater.checkForUpdates(nil) }
         } else if let path = info["report"] as? String {
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
         }
@@ -391,7 +414,7 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
         m.addItem(withTitle: "Show diagnostic reports", action: #selector(openLogs), keyEquivalent: "").target = self
         m.addItem(withTitle: "Report to Apple…", action: #selector(reportToApple), keyEquivalent: "").target = self
         m.addItem(.separator())
-        let upd = m.addItem(withTitle: "Check for Updates…", action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)), keyEquivalent: "")
+        let upd = m.addItem(withTitle: updateAvailable ? "Update available…" : "Check for Updates…", action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)), keyEquivalent: "")
         upd.target = updater
         m.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         item.menu = m

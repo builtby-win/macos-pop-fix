@@ -119,12 +119,13 @@ enum Notifier {
     /// `offerRestart` adds a "Restart audio now" button and makes a plain click restart too (handled in App's
     /// notification delegate). Posting with an existing `id` replaces that notification.
     static func post(_ title: String, _ body: String, reveal: URL? = nil, offerRestart: Bool = false,
-                     id: String = UUID().uuidString) {
+                     id: String = UUID().uuidString, kind: String? = nil) {
         let c = UNMutableNotificationContent()
         c.title = title
         c.body = body
         c.sound = .default
         if let reveal { c.userInfo["report"] = reveal.path }
+        if let kind { c.userInfo["kind"] = kind }
         if offerRestart {
             c.categoryIdentifier = restartCategory
             c.userInfo["kind"] = "detect"

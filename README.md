@@ -75,6 +75,8 @@ Build (Swift toolchain / Xcode CLT):
 ./build.sh && open PopFix.app
 ```
 
+Releasing: bump `VERSION`, push to `main`, then `./release.sh "<identity>" <notary-profile> "<notes>"` (build, notarize, GitHub release, then appcast on `main`, then verifies the live feed).
+
 Signed release (hardened runtime, notarized, stapled, produces `PopFix.zip`, `PopFix.dmg` and the Sparkle `appcast.xml`; upload `PopFix.zip`, `PopFix-<version>.zip` and `PopFix.dmg` to the GitHub release, commit `appcast.xml`):
 
 ```sh
