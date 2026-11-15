@@ -91,6 +91,56 @@ func restartCoreaudiod(interactive: Bool) -> Bool {
     return run("/usr/bin/osascript", ["-e", script]).status == 0
 }
 
+/// Now Playing control through MediaRemote. macOS 15.4+ blocks third-party apps from the framework, but
+/// Apple-signed /usr/bin/perl may use it, so (like FluidVoice) we run the mediaremote-adapter script under perl.
+/// It sees any app that publishes Now Playing (Music, Spotify, browser tabs, VLC, …) and has explicit
+/// pause/play, so there are no toggles and no Automation/Accessibility permissions.
+enum NowPlaying {
+    private struct Info: Decodable {
+        struct Payload: Decodable { let isPlaying: Bool? }
+        let payload: Payload
+    }
+
+    /// Wrapper that keeps the adapter's run loop alive through one query after a command so it can deliver.
+    private static let wrapper = """
+    my $script = shift @ARGV;
+    my $command = $ARGV[1];
+    do $script;
+    die $@ if $@;
+    main::get() if $command eq 'pause' || $command eq 'play';
+    """
+
+    private static func perl(_ command: String) -> (status: Int32, out: Data)? {
+        guard let script = Bundle.main.path(forResource: "run", ofType: "pl"),
+              let lib = Bundle.main.privateFrameworksPath.map({ $0 + "/libMediaRemoteAdapter.dylib" }) else { return nil }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
+        p.arguments = ["-e", wrapper, script, lib, command]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = FileHandle.nullDevice
+        do { try p.run() } catch { return nil }
+        let kill = DispatchWorkItem { p.terminate() }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 3, execute: kill)   // a wedged helper must not stall the restart
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        kill.cancel()
+        return (p.terminationStatus, data)
+    }
+
+    static func isPlaying() -> Bool {
+        guard let r = perl("get"), r.status == 0 else { return false }
+        return (try? JSONDecoder().decode(Info.self, from: r.out))?.payload.isPlaying == true
+    }
+
+    /// Pauses the current Now Playing app if it is playing; the returned closure resumes it.
+    static func pause() -> () -> Void {
+        guard isPlaying() else { return {} }
+        _ = perl("pause")
+        return { _ = perl("play") }
+    }
+}
+
 /// `sudo -n -l <cmd>` exits 0 for any allowed command, password-protected or not, so inspect the full
 /// listing for a NOPASSWD entry that covers it.
 func passwordlessRestartEnabled() -> Bool {
@@ -281,7 +331,10 @@ final class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelega
         }
         queue.async { [self] in
             let snap = Report.snapshot()
+            let resume = NowPlaying.pause()
             let ok = restartCoreaudiod(interactive: interactive)
+            if ok { Thread.sleep(forTimeInterval: 2) }  // let coreaudiod come back before resuming
+            resume()
             DispatchQueue.main.async {
                 self.restarting = false
                 if ok { self.lastRestart = Date() }

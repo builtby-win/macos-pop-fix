@@ -1,63 +1,92 @@
 <p align="center"><img src="Resources/AppIcon.png" width="128" alt="PopFix icon"></p>
 
-# PopFix
+<h1 align="center">PopFix</h1>
 
-A tiny macOS menu-bar app that detects the **crackling / popping audio bug** (`coreaudiod` missing I/O deadlines, seen on recent macOS betas and releases, e.g. [this thread](https://www.reddit.com/r/MacOSBeta/comments/1l7wg5z/cracking_popping_sound_during_audio_playback_on/)), restarts `coreaudiod` for you, and saves a diagnostic report you can attach to an Apple Feedback Assistant report.
+<p align="center">
+  Fixes the macOS crackling / popping audio bug automatically.<br>
+  A free, tiny menu-bar app. Signed, notarized, MIT licensed.
+</p>
 
-Restarting `coreaudiod` (`sudo killall coreaudiod`) is the known workaround. PopFix just notices when you need it.
+<p align="center">
+  <a href="https://github.com/builtby-win/macos-pop-fix/releases/latest/download/PopFix.zip"><b>⬇ Download PopFix.zip</b></a>
+  &nbsp;·&nbsp; macOS 13+ &nbsp;·&nbsp; Apple Silicon
+</p>
 
-## How it works
+---
 
-- **Detection:** streams `coreaudiod`'s unified-log lines `Audio IO Overload thread: …` via `log stream`. Each line is one missed I/O deadline, i.e. one audible pop. No root, no private APIs, near-zero CPU. On an affected machine this logged ~10 overloads/s while popping and 0 when clean.
-- **Trigger:** ≥ N overloads in a 10s window (default 10; menu: 3 / 10 / 30 / 100).
-- **Not CPU-based:** `coreaudiod` CPU rises while popping, but it's a symptom of system load, so it's a poor trigger.
-- **Restart:** `killall coreaudiod` needs root.
-  - *Restart coreaudiod now* prompts for your admin password.
-  - *Auto-restart on pops* (on by default) only uses passwordless `sudo -n` and never prompts. Until you enable passwordless restart once via *Enable passwordless restart…*, auto-restart can't run and PopFix notifies you instead. That item installs `/etc/sudoers.d/macos-pop-fix` allowing exactly `/usr/bin/killall coreaudiod` for your user (validated with `visudo -c`; removable from the same menu item). 30s cooldown.
-- **Notification + report:** each restart posts a notification and writes `~/Library/Logs/PopFix/report-<timestamp>.txt` containing macOS/build/model, load average, memory pressure, top CPU processes, and a summary of the last 3 minutes of `coreaudiod` overload events (which client app was overloading, causes, sample lines). Clicking the notification reveals the file.
-- **Reporting to Apple:** *Report to Apple…* opens Feedback Assistant and reveals the newest report to attach. PopFix never uploads anything itself; review the file first (it contains process names).
+## The problem
+
+On recent macOS releases and betas, audio randomly starts crackling because `coreaudiod` misses I/O deadlines ([example thread](https://www.reddit.com/r/MacOSBeta/comments/1l7wg5z/cracking_popping_sound_during_audio_playback_on/)). The known workaround is `sudo killall coreaudiod`. PopFix notices the problem and does that for you.
 
 ## Install
 
-Needs macOS 13+. Download the signed, notarized `PopFix.zip` from [Releases](../../releases), unzip, move `PopFix.app` to `/Applications`, open it.
-
-Or build from source (Swift toolchain / Xcode CLT):
+**Homebrew:**
 
 ```sh
-./build.sh && open PopFix.app
+brew install --cask builtby-win/tap/popfix
 ```
 
-To launch at login: System Settings → General → Login Items → add PopFix.
+**Or manually:**
+
+1. [Download PopFix.zip](https://github.com/builtby-win/macos-pop-fix/releases/latest/download/PopFix.zip) and unzip.
+2. Drag `PopFix.app` to `/Applications` and open it.
+3. Optional: System Settings → General → Login Items → add PopFix.
+
+## Features
+
+- **Detects pops:** counts `coreaudiod` "Audio IO Overload" log lines. No root, no private APIs, near-zero CPU.
+- **Auto-restarts `coreaudiod`** when overloads cross a threshold (3 / 10 / 30 / 100 per 10s; default 10), with a 30s cooldown.
+- **Pauses and resumes media** around the restart: whatever is in Now Playing (Music, Spotify, browser tabs, VLC, …) is paused, then resumed after `coreaudiod` is back.
+- **Saves a diagnostic report** for every restart, ready to attach to an Apple Feedback Assistant report. Nothing is uploaded by PopFix.
 
 ## Menu
 
 | Item | |
 | --- | --- |
-| Audio overloads (last 10s) | live count; the icon shows ⚠︎ and the count while over the threshold |
-| Restart coreaudiod now | manual restart (admin prompt unless passwordless is enabled) |
-| Auto-restart on pops | restart automatically (needs passwordless restart) |
-| Pop threshold | overloads per 10s that count as popping |
-| Enable / Remove passwordless restart… | install/remove the sudoers rule |
-| Show diagnostic reports / Report to Apple… | reveal latest report / open Feedback Assistant |
+| Audio overloads (last 10s) | Live count; the icon shows ⚠︎ while over the threshold |
+| Restart coreaudiod now | Manual restart (admin prompt unless passwordless is enabled) |
+| Auto-restart on pops | Restart automatically (needs passwordless restart) |
+| Pop threshold | Overloads per 10s that count as popping |
+| Enable / Remove passwordless restart… | Install/remove the sudoers rule |
+| Show diagnostic reports / Report to Apple… | Reveal the latest report / open Feedback Assistant |
 
-## CLI
+## Privacy and permissions
+
+- **Passwordless restart (optional):** installs `/etc/sudoers.d/macos-pop-fix`, allowing exactly `/usr/bin/killall coreaudiod` for your user (validated with `visudo -c`, removable from the same menu item). Auto-restart only ever uses `sudo -n` and never prompts for a password.
+- **Now Playing:** to pause and resume media, PopFix runs a bundled [mediaremote-adapter](https://github.com/ejbills/mediaremote-adapter) helper under `/usr/bin/perl`. It needs no Automation or Accessibility permission, and Apple Silicon only.
+- **Reports** are saved to `~/Library/Logs/PopFix/report-<timestamp>.txt`: macOS/build/model, load, memory pressure, top processes, and the last 3 minutes of overload events. They contain process names, so review before sharing.
+
+## Caveats
+
+- If something is starving the audio thread (heavy CPU/memory load), a restart clears the stuck state but the cause can bring it back. The report's "overloading clients" and top-process sections help find it.
+- A restart briefly cuts audio for every app.
+
+<details>
+<summary>CLI, building from source, releasing</summary>
 
 ```sh
 PopFix.app/Contents/MacOS/PopFix --probe    # print the overload rate for 20s
 PopFix.app/Contents/MacOS/PopFix --report   # write a diagnostic report now, no restart
 ```
 
-## Release builds
+Build (Swift toolchain / Xcode CLT):
+
+```sh
+./build.sh && open PopFix.app
+```
+
+Signed release (hardened runtime, notarized, stapled, produces `PopFix.zip`):
 
 ```sh
 ./build.sh --sign "Developer ID Application: Name (TEAMID)" --notarize <notarytool-profile>
 ```
 
-Signs with the hardened runtime, notarizes, staples, and produces `PopFix.zip`. Create the profile once with `xcrun notarytool store-credentials`. `scripts/make-icon.sh` regenerates the app icon.
+Create the profile once with `xcrun notarytool store-credentials`. `scripts/make-icon.sh` regenerates the app icon.
 
-## Caveats
+</details>
 
-- If the pops are caused by something starving the audio thread (heavy CPU/memory load), restarting `coreaudiod` clears the stuck state but the cause can bring it back. The report's "overloading clients" and top-process sections are there to help find it.
-- Restarting `coreaudiod` briefly cuts audio for every app.
+---
 
-MIT licensed.
+<p align="center">
+  Built by <a href="https://github.com/builtby-win">builtby.win</a> · media control via <a href="https://github.com/ejbills/mediaremote-adapter">mediaremote-adapter</a> (BSD-3-Clause) · <a href="LICENSE">MIT</a>
+</p>
