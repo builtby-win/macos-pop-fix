@@ -151,10 +151,14 @@ func passwordlessRestartEnabled() -> Bool {
 }
 
 func installSudoersRule() -> Bool {
-    let tmp = NSTemporaryDirectory() + "macos-pop-fix.sudoers"
-    let rule = "\(NSUserName()) ALL=(root) NOPASSWD: /usr/bin/killall coreaudiod\n"
-    guard (try? rule.write(toFile: tmp, atomically: true, encoding: .utf8)) != nil else { return false }
-    let sh = "/usr/sbin/visudo -cf '\(tmp)' && /usr/bin/install -m 0440 -o root -g wheel '\(tmp)' \(sudoersPath)"
+    // The privileged shell writes the rule itself into a root-owned staging file (sudo ignores names containing
+    // a dot), so no user-writable file sits between validation and install.
+    let user = NSUserName()
+    guard user.range(of: "^[A-Za-z0-9._-]+$", options: .regularExpression) != nil else { return false }
+    let tmp = "/etc/sudoers.d/.macos-pop-fix.tmp"
+    let rule = "\(user) ALL=(root) NOPASSWD: /usr/bin/killall coreaudiod"
+    let sh = "set -e; umask 077; /usr/bin/printf '%s\\\\n' '\(rule)' > \(tmp); /usr/sbin/chown root:wheel \(tmp); /bin/chmod 0440 \(tmp); "
+        + "if /usr/sbin/visudo -cf \(tmp); then /bin/mv -f \(tmp) \(sudoersPath); else /bin/rm -f \(tmp); exit 1; fi"
     let script = "do shell script \"\(sh)\" with administrator privileges"
     return run("/usr/bin/osascript", ["-e", script]).status == 0
 }

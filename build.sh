@@ -30,6 +30,7 @@ cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp .build/release/libMediaRemoteAdapter.dylib "$APP/Contents/Frameworks/"
 cp .build/checkouts/mediaremote-adapter/Sources/MediaRemoteAdapter/Resources/run.pl "$APP/Contents/Resources/"
 cp .build/checkouts/mediaremote-adapter/LICENSE "$APP/Contents/Resources/mediaremote-adapter-LICENSE.txt"
+cp .build/artifacts/sparkle/Sparkle/LICENSE "$APP/Contents/Resources/Sparkle-LICENSE.txt"
 VERSION=$(cat VERSION)
 cat > "$APP/Contents/Info.plist" <<PL
 <?xml version="1.0" encoding="UTF-8"?>
