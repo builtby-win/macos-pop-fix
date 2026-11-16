@@ -75,7 +75,7 @@ Build (Swift toolchain / Xcode CLT):
 ./build.sh && open PopFix.app
 ```
 
-Releasing: bump `VERSION`, push to `main`, then `./release.sh "<identity>" <notary-profile> "<notes>"` (build, notarize, GitHub release, then appcast on `main`, then verifies the live feed).
+Releasing: bump `VERSION`, push to `main`, then `./release.sh "<identity>" <notary-profile> "<notes>"` (build, notarize, GitHub release, appcast on `main`, verifies the live feed, then updates the Homebrew cask in `builtby-win/homebrew-tap`).
 
 Signed release (hardened runtime, notarized, stapled, produces `PopFix.zip`, `PopFix.dmg` and the Sparkle `appcast.xml`; upload `PopFix.zip`, `PopFix-<version>.zip` and `PopFix.dmg` to the GitHub release, commit `appcast.xml`):
 
@@ -90,5 +90,5 @@ Create the profile once with `xcrun notarytool store-credentials`. `scripts/make
 ---
 
 <p align="center">
-  Built by <a href="https://github.com/builtby-win">builtby.win</a> · media control via <a href="https://github.com/ejbills/mediaremote-adapter">mediaremote-adapter</a> (BSD-3-Clause) · <a href="LICENSE">MIT</a>
+  Built by <a href="https://github.com/builtby-win">builtby.win</a> · updates via <a href="https://sparkle-project.org">Sparkle</a> · media control via <a href="https://github.com/ejbills/mediaremote-adapter">mediaremote-adapter</a> (BSD-3-Clause) · <a href="LICENSE">MIT</a>
 </p>

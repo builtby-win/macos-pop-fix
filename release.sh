@@ -31,4 +31,16 @@ curl -fsSL -o /tmp/popfix-dl.zip "$URL"
 [ "$LEN" = "$(stat -f%z /tmp/popfix-dl.zip)" ] || { echo "length mismatch" >&2; exit 1; }
 .build/artifacts/sparkle/Sparkle/bin/sign_update --verify /tmp/popfix-dl.zip "$SIG"
 rm -f /tmp/popfix-dl.zip /tmp/popfix-feed.xml "PopFix-$V.zip"
+
+# Homebrew cask: point at this release's PopFix.zip (sha of the exact notarized asset users download).
+curl -fsSL -o /tmp/popfix-cask.zip "https://github.com/$REPO/releases/download/$TAG/PopFix.zip"
+SHA=$(shasum -a 256 /tmp/popfix-cask.zip | cut -d' ' -f1)
+[ "$SHA" = "$(shasum -a 256 PopFix.zip | cut -d' ' -f1)" ] || { echo "cask sha mismatch" >&2; exit 1; }
+rm -f /tmp/popfix-cask.zip
+TAP=$(mktemp -d)
+gh repo clone builtby-win/homebrew-tap "$TAP" -- -q
+sed -i '' -e "s/^  version \".*\"/  version \"$V\"/" -e "s/^  sha256 \".*\"/  sha256 \"$SHA\"/" "$TAP/Casks/popfix.rb"
+git -C "$TAP" commit -qam "popfix $V"
+git -C "$TAP" push -q origin HEAD
+rm -rf "$TAP"
 echo "Released $V; feed verified."
